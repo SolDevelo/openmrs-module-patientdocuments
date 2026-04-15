@@ -234,7 +234,8 @@ public class EncounterXmlBuilder {
 
 		String userName = (user != null && user.getPersonName() != null) ? user.getPersonName().getFullName() : "System";
 		String systemId = (user != null && user.getSystemId() != null) ? user.getSystemId() : "Unknown";
-		String printTimestamp = OpenmrsUtil.getDateTimeFormat(locale).format(new Date());
+		String printTimestamp = OpenmrsUtil.getDateTimeFormat(locale).format(new Date())
+				.replace('\u202F', ' ').replace('\u00A0', ' ');
 
 		String printedBy = String.format("Printed by %s (%s) at %s", userName, systemId, printTimestamp);
 		xml.append("<printedBy>").append(escape(printedBy)).append("</printedBy>");
