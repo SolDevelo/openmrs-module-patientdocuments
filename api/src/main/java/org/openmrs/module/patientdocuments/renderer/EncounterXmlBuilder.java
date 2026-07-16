@@ -12,6 +12,7 @@ package org.openmrs.module.patientdocuments.renderer;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.text.StringEscapeUtils;
 import org.openmrs.Concept;
+import org.openmrs.ConceptDatatype;
 import org.openmrs.ConceptName;
 import org.openmrs.Encounter;
 import org.openmrs.Obs;
@@ -26,6 +27,7 @@ import org.openmrs.api.context.Context;
 import org.openmrs.messagesource.MessageSourceService;
 import org.openmrs.module.initializer.api.InitializerService;
 import org.openmrs.module.o3forms.api.O3FormsService;
+import org.openmrs.module.patientdocuments.common.DateUtil;
 import org.openmrs.module.patientdocuments.common.Helper;
 import org.openmrs.module.patientdocuments.common.PatientDocumentsConstants;
 import org.openmrs.module.webservices.rest.SimpleObject;
@@ -41,9 +43,11 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 
@@ -53,13 +57,26 @@ public class EncounterXmlBuilder {
 
 	private static final String QUESTIONS_SECTION = "questions";
 
+	private static final String SECTIONS_SECTION = "sections";
+
 	private static final String ANSWERS_FIELD = "answers";
 
 	private static final String CONCEPT_FIELD = "concept";
 
 	private static final String LABEL_FIELD = "label";
 
+	private static final String ID_FIELD = "id";
+
+	/**
+	 * Prefix the O3 React form engine writes into Obs.formFieldPath, e.g. a field with id = skinColor_1 produces
+	 * the path rfe-forms-skinColor_1. We use this to map each rendered question occurrence to the specific observation
+	 * it captured, so questions that reuse the same concept across repeated sections each show their own single value.
+	 */
+	private static final String FORM_FIELD_PATH_PREFIX = "rfe-forms-";
+
 	private InitializerService initializerService;
+
+	private final Set<String> allFieldIds = new HashSet<>();
 
 	private static final Logger log = LoggerFactory.getLogger(EncounterXmlBuilder.class);
 
@@ -153,13 +170,13 @@ public class EncounterXmlBuilder {
 
 		if (isHeaderFieldEnabled("encounterDate")) {
 			xml.append("<encounterDate>")
-					.append(escape(OpenmrsUtil.getDateFormat(locale).format(encounter.getEncounterDatetime())))
+					.append(escape(DateUtil.formatDate(encounter.getEncounterDatetime())))
 					.append("</encounterDate>");
 		}
 
 		if (isHeaderFieldEnabled("visitStartDate")) {
-			String visitStartDate = (visit != null && visit.getStartDatetime() != null) 
-					? OpenmrsUtil.getDateFormat(locale).format(visit.getStartDatetime())
+			String visitStartDate = (visit != null && visit.getStartDatetime() != null)
+					? DateUtil.formatDate(visit.getStartDatetime())
 					: PatientDocumentsConstants.MISSING_VALUE_PLACEHOLDER;
 			xml.append("<visitStartDate>")
 					.append(escape(visitStartDate))
@@ -168,7 +185,7 @@ public class EncounterXmlBuilder {
 
 		if (isHeaderFieldEnabled("visitEndDate")) {
 			String visitEndDate = (visit != null && visit.getStopDatetime() != null)
-					? OpenmrsUtil.getDateFormat(locale).format(visit.getStopDatetime())
+					? DateUtil.formatDate(visit.getStopDatetime())
 					: PatientDocumentsConstants.MISSING_VALUE_PLACEHOLDER;
 			xml.append("<visitEndDate>")
 					.append(escape(visitEndDate))
@@ -204,11 +221,7 @@ public class EncounterXmlBuilder {
 
 		String userName = (user != null && user.getPersonName() != null) ? user.getPersonName().getFullName() : "System";
 		String systemId = (user != null && user.getSystemId() != null) ? user.getSystemId() : "Unknown";
-		// JDK 20+ locale-aware date formats use U+202F (narrow no-break space) before AM/PM.
-		// The font embedded by Apache FOP lacks that glyph and renders it as "#" in the PDF,
-		// so we normalize it (and U+00A0) to a regular ASCII space.
-		String printTimestamp = OpenmrsUtil.getDateTimeFormat(locale).format(new Date())
-				.replace('\u202F', ' ').replace('\u00A0', ' ');
+		String printTimestamp = DateUtil.formatDateTime(new Date());
 
 		String printedBy = String.format("Printed by %s (%s) at %s", userName, systemId, printTimestamp);
 		xml.append("<printedBy>").append(escape(printedBy)).append("</printedBy>");
@@ -237,6 +250,7 @@ public class EncounterXmlBuilder {
 
 			xml.append("<pages>");
 			List<Map<String, Object>> pages = schema.get("pages");
+			collectFieldIds(pages);
 			if (pages != null) {
 				for (Map<String, Object> page : pages) {
 					xml.append(renderPage(page, obsMap, locale));
@@ -402,7 +416,12 @@ public class EncounterXmlBuilder {
 			return PatientDocumentsConstants.NO_DATA_RECORDED_PLACEHOLDER;
 		}
 
-		List<Obs> observations = obsMap.get(concept.getUuid());
+		List<Obs> conceptObs = obsMap.get(concept.getUuid());
+		if (conceptObs.isEmpty()) {
+			return PatientDocumentsConstants.NO_DATA_RECORDED_PLACEHOLDER;
+		}
+
+		List<Obs> observations = selectObsForQuestion(question, conceptObs);
 		if (observations.isEmpty()) {
 			return PatientDocumentsConstants.NO_DATA_RECORDED_PLACEHOLDER;
 		}
@@ -410,6 +429,84 @@ public class EncounterXmlBuilder {
 		return observations.stream()
 				.map(obs -> getLocalizedObsValue(question, obs, locale))
 				.collect(Collectors.joining(", "));
+	}
+
+	List<Obs> selectObsForQuestion(Map<String, Object> question, List<Obs> conceptObs) {
+		String fieldId = (String) question.get(ID_FIELD);
+		if (StringUtils.isBlank(fieldId)) {
+			return conceptObs;
+		}
+
+		boolean anyFormFieldPath = conceptObs.stream()
+				.anyMatch(obs -> StringUtils.isNotBlank(obs.getFormFieldPath()));
+		if (!anyFormFieldPath) {
+			return conceptObs;
+		}
+
+		List<Obs> matched = new ArrayList<>();
+		for (Obs obs : conceptObs) {
+			if (matchesField(obs, fieldId)) {
+				matched.add(obs);
+			}
+		}
+		return matched;
+	}
+
+	private boolean matchesField(Obs obs, String fieldId) {
+		String formFieldPath = obs.getFormFieldPath();
+		if (StringUtils.isBlank(formFieldPath) || !formFieldPath.startsWith(FORM_FIELD_PATH_PREFIX)) {
+			return false;
+		}
+		String core = formFieldPath.substring(FORM_FIELD_PATH_PREFIX.length());
+		if (core.equals(fieldId)) {
+			return true;
+		}
+
+		if (core.startsWith(fieldId + "_") && !allFieldIds.contains(core)) {
+			return isAllDigits(core.substring(fieldId.length() + 1));
+		}
+		return false;
+	}
+
+	private boolean isAllDigits(String value) {
+		if (value.isEmpty()) {
+			return false;
+		}
+		for (int i = 0; i < value.length(); i++) {
+			if (!Character.isDigit(value.charAt(i))) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	void collectFieldIds(List<Map<String, Object>> pages) {
+		allFieldIds.clear();
+		if (pages == null) {
+			return;
+		}
+		for (Map<String, Object> page : pages) {
+			List<Map<String, Object>> sections = (List<Map<String, Object>>) page.get(SECTIONS_SECTION);
+			if (sections == null) {
+				continue;
+			}
+			for (Map<String, Object> section : sections) {
+				collectQuestionIds((List<Map<String, Object>>) section.get(QUESTIONS_SECTION));
+			}
+		}
+	}
+
+	private void collectQuestionIds(List<Map<String, Object>> questions) {
+		if (questions == null) {
+			return;
+		}
+		for (Map<String, Object> question : questions) {
+			Object id = question.get(ID_FIELD);
+			if (id instanceof String) {
+				allFieldIds.add((String) id);
+			}
+			collectQuestionIds((List<Map<String, Object>>) question.get(QUESTIONS_SECTION));
+		}
 	}
 
 	private String escape(String input) {
@@ -430,7 +527,32 @@ public class EncounterXmlBuilder {
 				return obs.getValueCoded().getDisplayString();
 			}
 		}
+
+		String formattedDate = formatDateObsValue(obs);
+		if (formattedDate != null) {
+			return formattedDate;
+		}
+
 		return obs.getValueAsString(locale);
+	}
+
+	String formatDateObsValue(Obs obs) {
+		Date value = obs.getValueDatetime();
+		if (value == null || obs.getConcept() == null || obs.getConcept().getDatatype() == null) {
+			return null;
+		}
+
+		ConceptDatatype datatype = obs.getConcept().getDatatype();
+		if (datatype.isDate()) {
+			return DateUtil.formatDate(value);
+		}
+		if (datatype.isTime()) {
+			return DateUtil.formatTime(value);
+		}
+		if (datatype.isDateTime()) {
+			return DateUtil.formatDateTime(value);
+		}
+		return null;
 	}
 
 	private String findAnswerLabel(Map<String, Object> question, String obsConceptUuid, Locale locale) {
