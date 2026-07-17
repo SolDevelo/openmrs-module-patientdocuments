@@ -134,15 +134,15 @@ public class EncounterXmlBuilder {
 		StringBuilder xml = new StringBuilder();
 		xml.append("<encounter>");
 
-		xml.append(buildHeaderContent(encounter, locale));
+		xml.append(buildHeaderContent(encounter));
 		xml.append(buildMainContent(encounter, locale, o3FormsService));
-		xml.append(buildFooterContent(user, locale));
+		xml.append(buildFooterContent(user));
 
 		xml.append("</encounter>");
 		return xml.toString();
 	}
 
-	private String buildHeaderContent(Encounter encounter, Locale locale) {
+	private String buildHeaderContent(Encounter encounter) {
 		StringBuilder xml = new StringBuilder();
 		Visit visit = encounter.getVisit();
 		Patient patient = encounter.getPatient();
@@ -218,7 +218,7 @@ public class EncounterXmlBuilder {
 		return xml.toString();
 	}
 
-	private String buildFooterContent(User user, Locale locale) {
+	private String buildFooterContent(User user) {
 		StringBuilder xml = new StringBuilder();
 
 		String userName = (user != null && user.getPersonName() != null) ? user.getPersonName().getFullName() : "System";
@@ -284,7 +284,7 @@ public class EncounterXmlBuilder {
 
 		xml.append("<page label=\"").append(escape(localizedLabel)).append("\">");
 
-		List<Map<String, Object>> sections = (List<Map<String, Object>>) page.get("sections");
+		List<Map<String, Object>> sections = (List<Map<String, Object>>) page.get(SECTIONS_SECTION);
 		if (sections != null) {
 			for (Map<String, Object> section : sections) {
 				xml.append(renderSection(section, obsMap, locale));
