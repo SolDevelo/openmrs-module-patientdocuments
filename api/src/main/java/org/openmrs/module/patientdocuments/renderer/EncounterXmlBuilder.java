@@ -78,6 +78,8 @@ public class EncounterXmlBuilder {
 
 	private final Set<String> allFieldIds = new HashSet<>();
 
+	private final Map<String, Integer> conceptRefUsage = new HashMap<>();
+
 	private static final Logger log = LoggerFactory.getLogger(EncounterXmlBuilder.class);
 
 	private InitializerService getInitializerService() {
@@ -449,7 +451,17 @@ public class EncounterXmlBuilder {
 				matched.add(obs);
 			}
 		}
-		return matched;
+
+		if (!matched.isEmpty()) {
+			return matched;
+		}
+
+		return isConceptSharedByMultipleQuestions(question) ? Collections.emptyList() : conceptObs;
+	}
+
+	private boolean isConceptSharedByMultipleQuestions(Map<String, Object> question) {
+		String conceptRef = extractConceptRef(question);
+		return conceptRef != null && conceptRefUsage.getOrDefault(conceptRef, 0) > 1;
 	}
 
 	private boolean matchesField(Obs obs, String fieldId) {
@@ -482,6 +494,7 @@ public class EncounterXmlBuilder {
 
 	void collectFieldIds(List<Map<String, Object>> pages) {
 		allFieldIds.clear();
+		conceptRefUsage.clear();
 		if (pages == null) {
 			return;
 		}
@@ -504,6 +517,10 @@ public class EncounterXmlBuilder {
 			Object id = question.get(ID_FIELD);
 			if (id instanceof String) {
 				allFieldIds.add((String) id);
+			}
+			String conceptRef = extractConceptRef(question);
+			if (conceptRef != null) {
+				conceptRefUsage.merge(conceptRef, 1, Integer::sum);
 			}
 			collectQuestionIds((List<Map<String, Object>>) question.get(QUESTIONS_SECTION));
 		}

@@ -15,6 +15,7 @@ import org.openmrs.Obs;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +36,14 @@ public class EncounterXmlBuilderObsSelectionTest {
 		return q;
 	}
 
+	private Map<String, Object> question(String id, String conceptRef) {
+		Map<String, Object> q = question(id);
+		Map<String, Object> options = new HashMap<>();
+		options.put("concept", conceptRef);
+		q.put("questionOptions", options);
+		return q;
+	}
+
 	/** Builds a one-page, one-section schema declaring the given question ids. */
 	private List<Map<String, Object>> schemaWith(String... questionIds) {
 		List<Map<String, Object>> questions = new ArrayList<>();
@@ -44,8 +53,8 @@ public class EncounterXmlBuilderObsSelectionTest {
 		Map<String, Object> section = new HashMap<>();
 		section.put("questions", questions);
 		Map<String, Object> page = new HashMap<>();
-		page.put("sections", new ArrayList<>(Arrays.asList(section)));
-		return new ArrayList<>(Arrays.asList(page));
+		page.put("sections", new ArrayList<>(Collections.singletonList(section)));
+		return new ArrayList<>(Collections.singletonList(page));
 	}
 
 	@Test
@@ -58,11 +67,11 @@ public class EncounterXmlBuilderObsSelectionTest {
 		Obs third = obsWithPath("rfe-forms-skinColor_2");
 		List<Obs> conceptObs = Arrays.asList(first, second, third);
 
-		Assertions.assertEquals(Arrays.asList(first),
+		Assertions.assertEquals(Collections.singletonList(first),
 				builder.selectObsForQuestion(question("skinColor"), conceptObs));
-		Assertions.assertEquals(Arrays.asList(second),
+		Assertions.assertEquals(Collections.singletonList(second),
 				builder.selectObsForQuestion(question("skinColor_1"), conceptObs));
-		Assertions.assertEquals(Arrays.asList(third),
+		Assertions.assertEquals(Collections.singletonList(third),
 				builder.selectObsForQuestion(question("skinColor_2"), conceptObs));
 	}
 
@@ -92,12 +101,19 @@ public class EncounterXmlBuilderObsSelectionTest {
 
 	@Test
 	public void selectObsForQuestion_shouldReturnEmptyWhenFieldHasNoMatchingObsButOthersDo() {
+		Map<String, Object> skinColor = question("skinColor", "apgarSkin");
+		Map<String, Object> skinColor1 = question("skinColor_1", "apgarSkin");
+		Map<String, Object> section = new HashMap<>();
+		section.put("questions", Arrays.asList(skinColor, skinColor1));
+		Map<String, Object> page = new HashMap<>();
+		page.put("sections", Collections.singletonList(section));
+
 		EncounterXmlBuilder builder = new EncounterXmlBuilder();
-		builder.collectFieldIds(schemaWith("skinColor", "skinColor_1"));
+		builder.collectFieldIds(Collections.singletonList(page));
 
-		List<Obs> conceptObs = Arrays.asList(obsWithPath("rfe-forms-skinColor_1"));
+		List<Obs> conceptObs = Collections.singletonList(obsWithPath("rfe-forms-skinColor_1"));
 
-		Assertions.assertTrue(builder.selectObsForQuestion(question("skinColor"), conceptObs).isEmpty());
+		Assertions.assertTrue(builder.selectObsForQuestion(skinColor, conceptObs).isEmpty());
 	}
 
 	@Test

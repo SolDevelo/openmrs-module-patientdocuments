@@ -47,7 +47,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.StringReader;
-import java.net.URI;
+import java.net.URL;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -132,15 +132,17 @@ public class EncounterPdfReportRenderer extends ReportDesignRenderer {
 	}
 
 	private FopFactory buildFopFactory() throws Exception {
-		try (InputStream fopConfigStream = Helper.getInputStreamByResource(FOP_CONFIG_PATH)) {
-			if (fopConfigStream != null) {
-				URI fontBaseUri = OpenmrsClassLoader.getInstance().getResource(FONT_BASE_PATH).toURI();
-				Configuration cfg = new DefaultConfigurationBuilder().build(fopConfigStream);
-				return new FopFactoryBuilder(fontBaseUri).setConfiguration(cfg).build();
-			}
-			log.warn("FOP configuration '{}' not found on classpath; extended glyphs may not render correctly.", FOP_CONFIG_PATH);
+		URL fontBaseUrl = OpenmrsClassLoader.getInstance().getResource(FONT_BASE_PATH);
+		if (fontBaseUrl == null) {
+			throw new IllegalStateException("Bundled font directory not found on classpath: " + FONT_BASE_PATH);
 		}
-		return FopFactory.newInstance(new URI("."));
+		try (InputStream fopConfigStream = Helper.getInputStreamByResource(FOP_CONFIG_PATH)) {
+			if (fopConfigStream == null) {
+				throw new IllegalStateException("Bundled FOP configuration not found on classpath: " + FOP_CONFIG_PATH);
+			}
+			Configuration cfg = new DefaultConfigurationBuilder().build(fopConfigStream);
+			return new FopFactoryBuilder(fontBaseUrl.toURI()).setConfiguration(cfg).build();
+		}
 	}
 
 	InputStream getStylesheetStream() throws IOException {
